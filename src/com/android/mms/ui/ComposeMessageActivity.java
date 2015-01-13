@@ -893,12 +893,6 @@ public class ComposeMessageActivity extends Activity
         }
     }
 
-    private void dismissMsimDialog() {
-        if (mMsimDialog != null) {
-            mMsimDialog.dismiss();
-        }
-    }
-
    private void processMsimSendMessage(int phoneId, final boolean bCheckEcmMode) {
         if (mMsimDialog != null) {
             mMsimDialog.dismiss();
@@ -908,64 +902,17 @@ public class ComposeMessageActivity extends Activity
     }
 
     private void LaunchMsimDialog(final boolean bCheckEcmMode) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(ComposeMessageActivity.this);
-        LayoutInflater inflater = (LayoutInflater) getSystemService(LAYOUT_INFLATER_SERVICE);
-        View layout = inflater.inflate(R.layout.multi_sim_sms_sender,
-                              (ViewGroup)findViewById(R.id.layout_root));
-        builder.setView(layout);
-        builder.setOnKeyListener(new DialogInterface.OnKeyListener() {
-                public boolean onKey(DialogInterface dialog, int keyCode, KeyEvent event) {
-                    switch (keyCode) {
-                        case KeyEvent.KEYCODE_BACK: {
-                            dismissMsimDialog();
-                            return true;
-                        }
-                        case KeyEvent.KEYCODE_SEARCH: {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-            }
-        );
-
-        builder.setNegativeButton(R.string.no, new DialogInterface.OnClickListener() {
-            public void onClick(DialogInterface dialog, int which) {
-                dismissMsimDialog();
-            }
-        });
-
         ContactList recipients = isRecipientsEditorVisible() ?
             mRecipientsEditor.constructContactsFromInput(false) : getRecipients();
-        builder.setTitle(getResources().getString(R.string.to_address_label)
-                + recipients.formatNamesAndNumbers(","));
-
-        mMsimDialog = builder.create();
-        mMsimDialog.setCanceledOnTouchOutside(true);
-
-        int[] smsBtnIds = {R.id.BtnSimOne, R.id.BtnSimTwo, R.id.BtnSimThree};
-        int phoneCount = TelephonyManager.getDefault().getPhoneCount();
-        Button[] smsBtns = new Button[phoneCount];
-
-        for (int i = 0; i < phoneCount; i++) {
-            final int phoneId = i;
-            smsBtns[i] = (Button) layout.findViewById(smsBtnIds[i]);
-            smsBtns[i].setVisibility(View.VISIBLE);
-            List<SubInfoRecord> sir = SubscriptionManager.getSubInfoUsingSlotId(phoneId);
-
-            String displayName = ((sir != null) && (sir.size() > 0)) ?
-                    sir.get(0).displayName : "SIM " + (i + 1);
-
-            Log.e(TAG, "PhoneID : " + phoneId + " displayName " + displayName);
-            smsBtns[i].setText(displayName);
-            smsBtns[i].setOnClickListener(
-                new View.OnClickListener() {
-                    public void onClick(View v) {
-                        Log.d(TAG, "Phone Id slected " + phoneId);
-                        processMsimSendMessage(phoneId, bCheckEcmMode);
-                }
-            });
-        }
+        mMsimDialog = new MsimDialog(this,
+                                     new MsimDialog.OnSimButtonClickListener() {
+                                         @Override
+                                         public void onSimButtonClick(int phoneId) {
+                                             processMsimSendMessage(phoneId,
+                                                                    bCheckEcmMode);
+                                         }
+                                     },
+                                     recipients);
         mMsimDialog.show();
     }
 
@@ -5273,11 +5220,9 @@ public class ComposeMessageActivity extends Activity
                 // Rebuild the message list so each MessageItem will get the last contact info.
                 ComposeMessageActivity.this.mMsgListAdapter.notifyDataSetChanged();
 
-                // Don't do this anymore. When we're showing chips, we don't want to switch from
-                // chips to text.
-//                if (mRecipientsEditor != null) {
-//                    mRecipientsEditor.populate(recipients);
-//                }
+                if (mRecipientsEditor != null) {
+                    mRecipientsEditor.populate(recipients);
+                }
             }
         });
     }
@@ -5677,10 +5622,20 @@ public class ComposeMessageActivity extends Activity
             StringBuilder sBuilder = new StringBuilder();
             for (Integer pos : mSelectedPos) {
                 Cursor c = (Cursor) getListView().getAdapter().getItem(pos);
-                sBuilder.append(c.getString(COLUMN_SMS_BODY));
+                String type = c.getString(COLUMN_MSG_TYPE);
+                if (type.equals("mms")) {
+                    sBuilder.append(mMsgListAdapter.getCachedBodyForPosition(pos));
+                } else {
+                    sBuilder.append(c.getString(COLUMN_SMS_BODY));
+                }
                 sBuilder.append(LINE_BREAK);
             }
-            copyToClipboard(sBuilder.toString());
+            if (!TextUtils.isEmpty(sBuilder.toString())) {
+                copyToClipboard(sBuilder.toString());
+            } else {
+                Toast.makeText(ComposeMessageActivity.this, R.string.copy_empty_string,
+                        Toast.LENGTH_SHORT).show();
+            }
         }
 
         private void copySmsToSim() {
@@ -5910,7 +5865,6 @@ public class ComposeMessageActivity extends Activity
 
             boolean noMmsSelected = mMmsSelected == 0;
             menu.findItem(R.id.copy_to_sim).setVisible(noMmsSelected);
-            menu.findItem(R.id.copy).setVisible(noMmsSelected);
 
             if (checkedCount > 1) {
                 // no detail
@@ -5937,7 +5891,6 @@ public class ComposeMessageActivity extends Activity
                 if (mMmsSelected > 0) {
                     mode.getMenu().findItem(R.id.forward).setVisible(false);
                     mode.getMenu().findItem(R.id.copy_to_sim).setVisible(false);
-                    mode.getMenu().findItem(R.id.copy).setVisible(false);
                 } else {
                     if (getResources().getBoolean(R.bool.config_forwardconv)) {
                         mode.getMenu().findItem(R.id.forward).setVisible(true);
@@ -5974,7 +5927,6 @@ public class ComposeMessageActivity extends Activity
 
                 if (mMmsSelected > 0) {
                     mode.getMenu().findItem(R.id.copy_to_sim).setVisible(false);
-                    mode.getMenu().findItem(R.id.copy).setVisible(false);
                     mode.getMenu().findItem(R.id.save_attachment)
                             .setVisible(isAttachmentSaveable(pos));
                 } else {
